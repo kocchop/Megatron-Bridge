@@ -470,6 +470,17 @@ def parse_cli_args():
         default=None,
     )
     slurm_args.add_argument(
+        "--env_file",
+        action="append",
+        type=str,
+        default=None,
+        help="Path to a bash-sourceable file with KEY=VALUE per line (# comments allowed). "
+        "Repeatable. The file is mounted into the container and sourced under `set -a` "
+        "before the training command, so values containing commas, semicolons, colons, "
+        "or quotes are handled by bash natively. NCCL_* vars are printed on rank 0 to "
+        "the worker log after sourcing.",
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",

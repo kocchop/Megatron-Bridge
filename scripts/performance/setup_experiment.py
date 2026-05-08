@@ -630,6 +630,30 @@ if __name__ == "__main__":
     custom_env_vars = args.custom_env_vars
     custom_env_vars.update(env)
 
+    # --env_file: mount each file, prepend `set -a; source <path>; set +a` to
+    # custom_bash_cmds, and add a rank-0 NCCL print so loaded vars show up in
+    # the worker log. Bash sources the file natively, so values containing
+    # commas, semicolons, colons, or quotes need no special escaping.
+    env_file_cmds = []
+    for path in args.env_file or []:
+        abs_path = os.path.abspath(path)
+        if not os.path.isfile(abs_path):
+            logger.error(f"--env_file not found: {abs_path}")
+            sys.exit(1)
+        args.custom_mounts.append(f"{abs_path}:{abs_path}")
+        env_file_cmds.append(["set", "-a"])
+        env_file_cmds.append(["source", abs_path])
+        env_file_cmds.append(["set", "+a"])
+    if env_file_cmds:
+        env_file_cmds.append([
+            "if [ ${SLURM_PROCID:-1} = 0 ]; then "
+            "echo ===== NCCL env vars =====; "
+            "env | grep ^NCCL_ | sort; "
+            "echo ==========================; "
+            "fi"
+        ])
+        args.custom_bash_cmds = env_file_cmds + (args.custom_bash_cmds or [])
+
     # Handle --list_config_variants: show available variants and interactively select
     config_variant = args.config_variant
     if args.list_config_variants:
