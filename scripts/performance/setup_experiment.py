@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -33,12 +34,12 @@ from nemo_run.config import get_nemorun_home
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import kubeflow_executor, slurm_executor
+    from utils.executors import generate_srun_script, kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import kubeflow_executor, slurm_executor
+    from .utils.executors import generate_srun_script, kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -463,6 +464,9 @@ def main(
     config_variant: str = "v1",
     gres: Optional[str] = None,
     packager: str = "git",
+    srun_mode: bool = False,
+    jobid: Optional[str] = None,
+    bg: bool = False,
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -583,6 +587,60 @@ def main(
 
     if nccl_ub:
         custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
+
+    # --- srun mode: bypass NeMo Run, generate + execute srun script directly ---
+    if srun_mode:
+        if log_dir is None:
+            log_dir = get_nemorun_home()
+
+        srun_output_dir = os.path.join(log_dir, "srun_experiments", exp_name)
+        srun_script_path, inner_script_path, srun_output_dir = generate_srun_script(
+            gpu=gpu,
+            jobid=jobid,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            run_script_path=str(run_script_path),
+            script_args=list(sys.argv[1:]),
+            output_dir=srun_output_dir,
+            exp_name=exp_name,
+            custom_mounts=custom_mounts,
+            custom_env_vars=custom_env_vars,
+            custom_srun_args=custom_srun_args,
+            custom_bash_cmds=custom_bash_cmds,
+            hf_token=hf_token,
+            nemo_home=nemo_home,
+            wandb_key=wandb_key,
+            gres=gres,
+            enable_nsys=enable_nsys,
+            profiling_start_step=profiling_start_step,
+            profiling_stop_step=profiling_stop_step,
+            profiling_ranks=profiling_ranks,
+            nsys_trace=nsys_trace,
+            nsys_extra_args=nsys_extra_args,
+            profiling_gpu_metrics=profiling_gpu_metrics,
+        )
+
+        if dryrun:
+            logger.info(f"dryrun requested. Generated scripts at: {srun_output_dir}")
+            logger.info(f"  srun wrapper: {srun_script_path}")
+            logger.info(f"  inner script: {inner_script_path}")
+            with open(srun_script_path, "r") as f:
+                print(f.read())
+            return
+
+        logger.info(f"Launching srun script: {srun_script_path}")
+        if bg:
+            log_file = os.path.join(srun_output_dir, "launcher.log")
+            fh = open(log_file, "w")
+            proc = subprocess.Popen(["bash", srun_script_path], stdout=fh, stderr=fh)
+            logger.info(f"Launched in background (PID {proc.pid}), log: {log_file}")
+        else:
+            result = subprocess.run(["bash", srun_script_path])
+            if result.returncode != 0:
+                raise Exception(f"srun job failed with exit code {result.returncode}")
+            logger.info("srun job completed successfully")
+        return
 
     if kubeflow_namespace:
         executor = kubeflow_executor(
@@ -926,6 +984,30 @@ if __name__ == "__main__":
     custom_env_vars = args.custom_env_vars
     custom_env_vars.update(env)
 
+    # --env_file: mount each file, prepend `set -a; source <path>; set +a` to
+    # custom_bash_cmds, and add a rank-0 NCCL print so loaded vars show up in
+    # the worker log. Bash sources the file natively, so values containing
+    # commas, semicolons, colons, or quotes need no special escaping.
+    env_file_cmds = []
+    for path in args.env_file or []:
+        abs_path = os.path.abspath(path)
+        if not os.path.isfile(abs_path):
+            logger.error(f"--env_file not found: {abs_path}")
+            sys.exit(1)
+        args.custom_mounts.append(f"{abs_path}:{abs_path}")
+        env_file_cmds.append(["set", "-a"])
+        env_file_cmds.append(["source", abs_path])
+        env_file_cmds.append(["set", "+a"])
+    if env_file_cmds:
+        env_file_cmds.append([
+            "if [ ${SLURM_PROCID:-1} = 0 ]; then "
+            "echo ===== NCCL env vars =====; "
+            "env | grep ^NCCL_ | sort; "
+            "echo ==========================; "
+            "fi"
+        ])
+        args.custom_bash_cmds = env_file_cmds + (args.custom_bash_cmds or [])
+
     # Handle --list_config_variants: show available variants and interactively select
     config_variant = args.config_variant
     if args.list_config_variants:
@@ -1034,4 +1116,7 @@ if __name__ == "__main__":
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,
+        srun_mode=args.srun,
+        jobid=args.jobid,
+        bg=args.bg,
     )

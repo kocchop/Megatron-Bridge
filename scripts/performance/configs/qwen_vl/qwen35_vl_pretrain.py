@@ -294,6 +294,20 @@ def qwen35_vl_397b_a17b_pretrain_config_gb200(
     )
 
 
+def qwen35_vl_397b_a17b_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    return _qwen35_vl_pretrain_config(
+        "qwen35_vl_397b_a17b",
+        "vr200",
+        qwen35_vl_397b_a17b_pretrain_mock_config,
+        precision=precision,
+        mock=mock,
+        config_variant=config_variant,
+    )
+
+
 def qwen35_vl_397b_a17b_pretrain_config_b200(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:

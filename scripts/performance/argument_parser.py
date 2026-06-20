@@ -498,6 +498,17 @@ def parse_cli_args():
         default=None,
     )
     slurm_args.add_argument(
+        "--env_file",
+        action="append",
+        type=str,
+        default=None,
+        help="Path to a bash-sourceable file with KEY=VALUE per line (# comments allowed). "
+        "Repeatable. The file is mounted into the container and sourced under `set -a` "
+        "before the training command, so values containing commas, semicolons, colons, "
+        "or quotes are handled by bash natively. NCCL_* vars are printed on rank 0 to "
+        "the worker log after sourcing.",
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
@@ -511,6 +522,25 @@ def parse_cli_args():
         "Use semicolons (;) to separate parameters when values contain commas. "
         "Examples: 'nodelist=node001,node002;constraint=gpu' or 'reservation=my_res;exclusive'",
         required=False,
+    )
+    slurm_args.add_argument(
+        "--srun",
+        action="store_true",
+        help="Launch with srun into an existing SLURM allocation instead of sbatch. "
+        "Use with --jobid to target a specific allocation, or run from within salloc.",
+        default=False,
+    )
+    slurm_args.add_argument(
+        "--jobid",
+        type=str,
+        help="SLURM allocation job ID for srun mode. If omitted, uses $SLURM_JOB_ID from environment.",
+        default=None,
+    )
+    slurm_args.add_argument(
+        "--bg",
+        action="store_true",
+        help="Run srun in background and return immediately (srun mode only).",
+        default=False,
     )
     slurm_args.add_argument(
         "--packager",

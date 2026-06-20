@@ -64,6 +64,29 @@ KIMI_K2_PRETRAIN_CONFIG_VR200_BF16 = KIMI_K2_PRETRAIN_CONFIG_GB200_BF16
 KIMI_K2_PRETRAIN_CONFIG_VR200_FP8_MX = KIMI_K2_PRETRAIN_CONFIG_GB200_FP8_MX
 
 
+# 128-GPU VR200 variant (config_variant="128gpu"): half the GPUs of the 256-GPU
+# baseline. PP=2 / MBS=1 / no CUDA graph, with selective recompute to absorb the
+# heavier per-stage memory (PP=2 doubles layers-per-stage vs the PP=4 baseline).
+# NOTE: the Kimi-K2 pipeline-layout map only defines PP=2 paired with VP=8, so
+# virtual_pipeline_model_parallel_size MUST be 8 here. EP=64 keeps DP=1
+# (128 / (PP=2 * EP=64)).
+KIMI_K2_PRETRAIN_CONFIG_VR200_128GPU = replace(
+    BASE_KIMI_K2_CONFIG,
+    num_gpus=128,
+    global_batch_size=1024,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=8,
+    expert_model_parallel_size=64,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
+    recompute_modules=["mla_up_proj", "moe_act"],
+    cuda_graph_impl="none",
+)
+KIMI_K2_PRETRAIN_CONFIG_VR200_BF16_128GPU = KIMI_K2_PRETRAIN_CONFIG_VR200_128GPU
+KIMI_K2_PRETRAIN_CONFIG_VR200_FP8_MX_128GPU = KIMI_K2_PRETRAIN_CONFIG_VR200_128GPU
+
+
 KIMI_K2_PRETRAIN_CONFIG_B300 = replace(
     BASE_KIMI_K2_CONFIG,
     num_gpus=256,
@@ -120,6 +143,8 @@ __all__ = [
     "KIMI_K2_PRETRAIN_CONFIG_GB200_FP8_MX",
     "KIMI_K2_PRETRAIN_CONFIG_VR200_BF16",
     "KIMI_K2_PRETRAIN_CONFIG_VR200_FP8_MX",
+    "KIMI_K2_PRETRAIN_CONFIG_VR200_BF16_128GPU",
+    "KIMI_K2_PRETRAIN_CONFIG_VR200_FP8_MX_128GPU",
     "KIMI_K2_PRETRAIN_CONFIG_B300_BF16",
     "KIMI_K2_PRETRAIN_CONFIG_B300_FP8_CS",
     "KIMI_K2_PRETRAIN_CONFIG_B300_FP8_MX",

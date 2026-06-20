@@ -174,6 +174,210 @@ def slurm_executor(
     return executor
 
 
+def generate_srun_script(
+    gpu: str,
+    jobid: str,
+    nodes: int,
+    num_gpus_per_node: int,
+    container_image: str,
+    run_script_path: str,
+    script_args: List[str],
+    output_dir: str,
+    exp_name: str,
+    custom_mounts: List[str] = [],
+    custom_env_vars: Dict[str, str] = {},
+    custom_srun_args: List[str] = [],
+    custom_bash_cmds: List[List[str]] = None,
+    hf_token: str = None,
+    nemo_home: str = DEFAULT_NEMO_HOME,
+    wandb_key: str = None,
+    gres: Optional[str] = None,
+    enable_nsys: bool = False,
+    profiling_start_step: int = 10,
+    profiling_stop_step: int = 11,
+    profiling_ranks: Optional[List[int]] = None,
+    nsys_trace: Optional[List[str]] = None,
+    nsys_extra_args: Optional[List[str]] = None,
+    profiling_gpu_metrics: bool = False,
+    record_shapes: bool = False,
+) -> tuple:
+    """
+    Generate standalone srun wrapper and inner launcher scripts for pre-allocated nodes.
+
+    Returns:
+        (srun_script_path, inner_script_path, output_dir) — paths to the generated scripts
+    """
+    custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
+    script_args = list(script_args)
+
+    # Build env vars (same logic as slurm_executor)
+    env_vars = dict(PERF_ENV_VARS)
+    if wandb_key is not None:
+        env_vars["WANDB_API_KEY"] = wandb_key
+    if gpu.lower() == "gb200":
+        env_vars["NCCL_NET_GDR_LEVEL"] = "PHB"
+        env_vars["NCCL_NET_GDR_C2C"] = "1"
+    if nemo_home != DEFAULT_NEMO_CACHE_HOME:
+        env_vars["NEMO_HOME"] = nemo_home
+    if hf_token is not None:
+        env_vars.update({"HF_TOKEN": hf_token, "TRANSFORMERS_OFFLINE": "0"})
+    env_vars.update(custom_env_vars)
+
+    # Build mounts
+    mounts = []
+    if nemo_home != DEFAULT_NEMO_CACHE_HOME:
+        mounts.append(f"{nemo_home}:{nemo_home}")
+    mounts.extend(custom_mounts)
+
+    # Build srun args
+    srun_args = custom_srun_args.copy() + [
+        "--mpi=pmix",
+        "--no-container-mount-home",
+    ]
+
+    # NUMA binding (same logic as slurm_executor)
+    numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
+    numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
+    if gpu.lower() in ["b300"]:
+        numa_cmd += " -C $((SLURM_LOCALID * 16)),$((SLURM_LOCALID * 16 + 1))"
+    custom_bash_cmds.append(numa_cmd)
+
+    # Create output directory (must exist before nsys path resolution below)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # nsys profiling: wrap python with `nsys profile -o <dir>/profile_<jobid>_node<id>_rank<id>`,
+    # pre-create the output dir, and append hydra overrides so the recipe triggers
+    # cudaProfilerStart/Stop on the configured ranks/steps (capture-range=cudaProfilerApi).
+    nsys_prefix = ""
+    if enable_nsys:
+        nsys_dir = os.path.join(output_dir, "nsys_profile")
+        os.makedirs(nsys_dir, exist_ok=True)
+
+        if nsys_trace is None:
+            nsys_trace = ["cuda-sw", "nvtx"]
+        default_extra_args = [
+            "--force-overwrite=true",
+            "--capture-range=cudaProfilerApi",
+            "--capture-range-end=stop",
+            "--cuda-graph-trace=node",
+            "--cuda-event-trace=false",
+        ]
+        extra_args = list(nsys_extra_args) + default_extra_args if nsys_extra_args else default_extra_args
+        if profiling_gpu_metrics:
+            # Only attach gpu-metrics on rank 0 of each node to avoid contention
+            extra_args.append("--gpu-metrics-devices=$([ \"$SLURM_LOCALID\" = \"0\" ] && echo all || echo none)")
+
+        nsys_filename = "profile_${SLURM_JOB_ID}_node${SLURM_NODEID}_rank${SLURM_PROCID}"
+        nsys_prefix = (
+            f"nsys profile -s none -t {','.join(nsys_trace)} "
+            f"-o {nsys_dir}/{nsys_filename} "
+            f"{' '.join(extra_args)}"
+        )
+
+        ranks = profiling_ranks if profiling_ranks else [0]
+        ranks_override = "[" + ",".join(str(r) for r in ranks) + "]"
+        script_args.extend(
+            [
+                "profiling.use_nsys_profiler=true",
+                f"profiling.profile_step_start={profiling_start_step}",
+                f"profiling.profile_step_end={profiling_stop_step}",
+                f"profiling.profile_ranks={ranks_override}",
+                f"profiling.record_shapes={str(record_shapes).lower()}",
+            ]
+        )
+
+    # Build the inner command: python run_script.py <args>
+    script_dir = str(Path(run_script_path).parent.resolve())
+    python_cmd = f"python {run_script_path} {' '.join(script_args)}"
+    if nsys_prefix:
+        python_cmd = f"{nsys_prefix} {python_cmd}"
+    pre_cmds = " ; ".join(custom_bash_cmds)
+    inner_cmd = f"{pre_cmds} {python_cmd}" if pre_cmds else python_cmd
+
+    # Write inner launcher script
+    inner_script_path = os.path.join(output_dir, f"{exp_name}_launcher.sh")
+    inner_script_content = f"""#!/usr/bin/env bash
+set -euo pipefail
+
+# NOTE: DO NOT change the single quotes to double quotes.
+bash -c '{inner_cmd}'
+"""
+    with open(inner_script_path, "w") as f:
+        f.write(inner_script_content)
+    os.chmod(inner_script_path, 0o755)
+
+    # Add output dir and script dir to mounts so they're visible inside the container
+    mounts.append(f"{output_dir}:{output_dir}")
+    mounts.append(f"{script_dir}:{script_dir}")
+
+    # Build container mount string
+    mount_str = ",".join(mounts) if mounts else ""
+
+    # Build srun flags string
+    srun_flags = " \\\n  ".join(srun_args)
+
+    # Build gres flag
+    gres_flag = f"  --gres={gres} \\\n" if gres else ""
+
+    # Build env export lines
+    env_exports = "\n".join(f'export {k}={v}' for k, v in env_vars.items())
+    env_exports += f"\nexport PYTHONPATH={script_dir}:$PYTHONPATH"
+
+    # Write srun wrapper script
+    srun_script_path = os.path.join(output_dir, f"{exp_name}_srun.sh")
+    srun_script_content = f"""#!/bin/bash
+# Generated srun wrapper for pre-allocated nodes
+# Usage: bash {srun_script_path}  (from login node with --jobid, or within salloc session)
+set -evx
+
+# Job ID: from CLI (--jobid) or from environment (salloc session)
+ALLOC_JOB_ID="{jobid or ''}"
+if [ -z "$ALLOC_JOB_ID" ]; then
+  ALLOC_JOB_ID="$SLURM_JOB_ID"
+fi
+
+if [ -z "$ALLOC_JOB_ID" ]; then
+  echo "ERROR: No allocation job ID. Use --jobid or run from within salloc."
+  exit 1
+fi
+
+echo "Allocation Job ID: $ALLOC_JOB_ID"
+echo "Experiment: {exp_name}"
+echo "Requesting: {nodes} nodes x {num_gpus_per_node} tasks/node"
+echo "Started: $(date)"
+
+# Environment
+{env_exports}
+
+# Run
+srun \\
+  --jobid=$ALLOC_JOB_ID \\
+  --overlap \\
+  --nodes={nodes} \\
+  --ntasks-per-node={num_gpus_per_node} \\
+{gres_flag}  --output {output_dir}/log-{exp_name}_%j.out \\
+  --container-image {container_image} \\
+  --container-mounts {mount_str} \\
+  --wait=60 --kill-on-bad-exit=1 \\
+  {srun_flags} \\
+  bash {inner_script_path}
+
+EXIT_CODE=$?
+echo "Finished: $(date)"
+echo "Exit code: $EXIT_CODE"
+set +x
+exit $EXIT_CODE
+"""
+    with open(srun_script_path, "w") as f:
+        f.write(srun_script_content)
+    os.chmod(srun_script_path, 0o755)
+
+    logger.info(f"Generated srun wrapper: {srun_script_path}")
+    logger.info(f"Generated inner script: {inner_script_path}")
+
+    return srun_script_path, inner_script_path, output_dir
+
+
 def kubeflow_executor(
     namespace: str,
     nodes: int,

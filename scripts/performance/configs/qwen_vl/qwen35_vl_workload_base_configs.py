@@ -357,7 +357,7 @@ QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_BF16 = replace(
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
     moe_flex_dispatcher_backend="hybridep",
-    cuda_graph_impl="transformer_engine",
+    # cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 
@@ -368,12 +368,27 @@ QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_CS = replace(
     pipeline_model_parallel_size=8,
     expert_model_parallel_size=8,
     moe_flex_dispatcher_backend="hybridep",
-    cuda_graph_impl="transformer_engine",
+    # cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 
 
 QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_MX = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_CS
+
+
+# VR200 mirrors GB200 for the 397B-A17B model, except PP: the GB200 PP=8 does not
+# divide the model's 60 language layers (MCore requires num_layers % pp == 0), so
+# VR200 uses PP=4 (15 layers/stage). With EP=8 on 64 GPUs that gives DP=2;
+# GBS=1024 stays divisible by DP*MBS.
+QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_BF16 = replace(
+    QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_BF16,
+    pipeline_model_parallel_size=4,
+)
+QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_FP8_CS = replace(
+    QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_CS,
+    pipeline_model_parallel_size=4,
+)
+QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_FP8_MX = QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_FP8_CS
 
 
 QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B200_BF16 = replace(
@@ -462,6 +477,9 @@ __all__ = [
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_BF16",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_CS",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_GB200_FP8_MX",
+    "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_BF16",
+    "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_FP8_CS",
+    "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_VR200_FP8_MX",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B200_BF16",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B200_FP8_CS",
     "QWEN35_VL_397B_A17B_PRETRAIN_CONFIG_B200_FP8_MX",

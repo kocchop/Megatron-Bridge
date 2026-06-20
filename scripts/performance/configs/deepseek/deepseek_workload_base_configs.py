@@ -119,9 +119,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_V1 = replace(
     expert_model_parallel_size=64,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
-    cuda_graph_impl="transformer_engine",
+    cutedsl_fused_grouped_mlp=True,
+    # cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
-    recompute_modules=["mla_up_proj"],
+    recompute_modules=["mla_up_proj","moe_act"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_V1
