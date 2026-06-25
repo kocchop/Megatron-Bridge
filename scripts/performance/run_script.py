@@ -120,6 +120,14 @@ def main():
     else:
         forward_step_func = forward_step
 
+    # WORKAROUND: the CuteDSL fused grouped MLP kernel (GroupedGemmGluSm100,
+    # enabled by cutedsl_fused_grouped_mlp=True) calls argparse.parse_args() against
+    # the live sys.argv on its first build (first MoE forward). It only knows a
+    # `-diagnostic` flag, so it errors on our CLI/hydra args and exits(2), killing
+    # training at step 0. All our args are already consumed by parse_known_args() +
+    # set_cli_overrides above, so truncate argv to argv[0] to make that parse a no-op.
+    sys.argv = sys.argv[:1]
+
     pretrain(config=recipe, forward_step_func=forward_step_func)
 
     if torch.distributed.is_initialized():

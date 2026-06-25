@@ -71,6 +71,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1,
     micro_batch_size=1,
     cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
     fp8_dot_product_attention=True,
@@ -120,7 +121,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_V1 = replace(
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
     cutedsl_fused_grouped_mlp=True,
-    # cuda_graph_impl="transformer_engine",
+    cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     recompute_modules=["mla_up_proj","moe_act"],
 )
@@ -349,18 +350,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE = replace(
 # GB300-based VR200 configs (config_variant="gb300"): VR200 adopts the GB300
 # recipe wholesale, plus the VR200 CuteDSL fused grouped MLP override. The source
 # GB300 configs are unchanged (replace() returns a copy).
-DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_BF16_GB300 = replace(
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1, cutedsl_fused_grouped_mlp=True
-)
-DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_GB300 = replace(
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1, cutedsl_fused_grouped_mlp=True
-)
-DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_MX_GB300 = replace(
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1, cutedsl_fused_grouped_mlp=True
-)
-DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_NVFP4_GB300 = replace(
-    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V1, cutedsl_fused_grouped_mlp=True
-)
+DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_BF16_GB300 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_GB300 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_MX_GB300 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_NVFP4_GB300 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V2
 __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_BF16_GB300",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_GB300",
